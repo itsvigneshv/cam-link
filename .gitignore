@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/next-dist/
 /out/
 
 # production
@@ -23,15 +24,33 @@
 # misc
 .DS_Store
 *.pem
+.firebase/
+webcam-build-tmp/
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+firebase-debug.log*
+firebase-debug.*.log
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (examples are committed)
+.env
+.env.*
+!.env.example
+bridge/.env
+!bridge/.env.example
+
+# python bridge
+bridge/.venv/
+bridge/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# unused Cloudflare worker experiment (not required to run Cam Link)
+/worker/
 
 # vercel
 .vercel
