@@ -7,6 +7,13 @@ export function buildPhoneJoinUrl(origin: string, roomCode: string): string {
   return `${base}/phone#${code}`;
 }
 
+/** Desktop control panel for the same room (photo / record on phone). */
+export function buildDesktopControlUrl(origin: string, roomCode: string): string {
+  const code = normalizeRoomCode(roomCode);
+  const base = origin.replace(/\/$/, "");
+  return `${base}/desktop#${code}`;
+}
+
 export function readRoomFromLocation(
   searchParams: URLSearchParams,
   hash: string,

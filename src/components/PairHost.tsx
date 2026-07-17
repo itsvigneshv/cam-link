@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { buildPhoneJoinUrl } from "@/lib/join";
+import { buildDesktopControlUrl, buildPhoneJoinUrl } from "@/lib/join";
 import { generateRoomCode } from "@/lib/rooms";
 import { createRoom, watchRoom, type RoomDoc } from "@/lib/signaling";
 
@@ -16,6 +16,11 @@ export function PairHost() {
   const phoneUrl = useMemo(() => {
     if (typeof window === "undefined" || !roomCode) return "";
     return buildPhoneJoinUrl(window.location.origin, roomCode);
+  }, [roomCode]);
+
+  const desktopUrl = useMemo(() => {
+    if (typeof window === "undefined" || !roomCode) return "";
+    return buildDesktopControlUrl(window.location.origin, roomCode);
   }, [roomCode]);
 
   useEffect(() => {
@@ -93,6 +98,13 @@ export function PairHost() {
               className="font-medium text-teal-700 underline-offset-2 hover:underline"
             >
               /phone#{roomCode}
+            </a>
+            . Photo / record controls:{" "}
+            <a
+              href={desktopUrl}
+              className="font-medium text-teal-700 underline-offset-2 hover:underline"
+            >
+              /desktop#{roomCode}
             </a>
             .
           </p>

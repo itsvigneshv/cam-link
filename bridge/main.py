@@ -103,12 +103,15 @@ def load_config() -> tuple[str, str, str]:
 
 
 def print_pairing(web_origin: str, room_id: str, lan_ips: list[str]) -> None:
-    url = f"{web_origin.rstrip('/')}/phone#{room_id}"
+    base = web_origin.rstrip("/")
+    url = f"{base}/phone#{room_id}"
+    desktop = f"{base}/desktop#{room_id}"
     print("\n=== Cam Link bridge ===")
     print(f"Room code : {room_id}")
     print(f"LAN IPs   : {', '.join(lan_ips) if lan_ips else '(none detected)'}")
     print("Mode      : local WebRTC (video stays on your LAN)")
-    print(f"Open on iPhone Safari:\n  {url}\n")
+    print(f"Open on iPhone Safari:\n  {url}")
+    print(f"Desktop photo / record controls:\n  {desktop}\n")
     if qrcode is not None:
         qr = qrcode.QRCode(border=1)
         qr.add_data(url)

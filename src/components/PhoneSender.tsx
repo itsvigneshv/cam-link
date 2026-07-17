@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { NetworkGate } from "@/components/NetworkGate";
+import {
+  capturePhotoFromVideo,
+  createPhoneRecorder,
+  extensionForMime,
+  saveBlobToDevice,
+} from "@/lib/capture";
+import {
+  setPhoneCaptureStatus,
+  watchCaptureCommands,
+  type CaptureCommand,
+} from "@/lib/commands";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { readRoomFromLocation } from "@/lib/join";
 import type { LanCheckResult } from "@/lib/lanCheck";
@@ -44,15 +55,32 @@ export function PhoneSender() {
   const [lanReady, setLanReady] = useState(false);
   const [lanDetail, setLanDetail] = useState<string | null>(null);
   const [desktopLanIps, setDesktopLanIps] = useState<string[]>([]);
+  const [recording, setRecording] = useState(false);
+  const [captureNote, setCaptureNote] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const answerAppliedRef = useRef(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordMimeRef = useRef("video/mp4");
+  const handledCommandsRef = useRef<Set<string>>(new Set());
+  const activeRoomRef = useRef("");
 
   const cleanup = useCallback(() => {
     log.info("cleanup peer/camera");
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    recorderRef.current = null;
+    recordChunksRef.current = [];
+    setRecording(false);
     unsubscribersRef.current.forEach((u) => u());
     unsubscribersRef.current = [];
     pcRef.current?.close();
@@ -101,12 +129,101 @@ export function PhoneSender() {
     log.info("LAN gate passed", result);
   }, []);
 
+  const takePhoto = useCallback(async () => {
+    const roomId = activeRoomRef.current;
+    const video = videoRef.current;
+    if (!video || !roomId) {
+      throw new Error("Camera is not live yet");
+    }
+    await setPhoneCaptureStatus(roomId, "saving", "Saving photo on iPhone…");
+    await capturePhotoFromVideo(video);
+    setCaptureNote("Photo saved on this iPhone (Downloads / Files).");
+    await setPhoneCaptureStatus(
+      roomId,
+      "idle",
+      "Photo saved on iPhone",
+    );
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    const roomId = activeRoomRef.current;
+    const stream = streamRef.current;
+    if (!stream || !roomId) throw new Error("Camera is not live yet");
+    if (recorderRef.current && recorderRef.current.state === "recording") {
+      return;
+    }
+    const { recorder, mimeType } = createPhoneRecorder(stream);
+    recordMimeRef.current = mimeType;
+    recordChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) recordChunksRef.current.push(event.data);
+    };
+    recorder.onerror = (event) => {
+      log.error("MediaRecorder error", event);
+    };
+    recorder.start(1000);
+    recorderRef.current = recorder;
+    setRecording(true);
+    setCaptureNote("Recording on iPhone…");
+    await setPhoneCaptureStatus(roomId, "recording", "Recording on iPhone…");
+  }, []);
+
+  const stopRecording = useCallback(async () => {
+    const roomId = activeRoomRef.current;
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      throw new Error("Not recording");
+    }
+    await setPhoneCaptureStatus(roomId, "saving", "Saving video on iPhone…");
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      recorder.onstop = () => {
+        const type = recordMimeRef.current || "video/mp4";
+        resolve(new Blob(recordChunksRef.current, { type }));
+      };
+      recorder.onerror = () => reject(new Error("Recording failed"));
+      recorder.stop();
+    });
+
+    recorderRef.current = null;
+    recordChunksRef.current = [];
+    setRecording(false);
+
+    const ext = extensionForMime(blob.type || recordMimeRef.current);
+    saveBlobToDevice(blob, `camlink-${Date.now()}.${ext}`);
+    setCaptureNote("Video saved on this iPhone (Downloads / Files).");
+    await setPhoneCaptureStatus(roomId, "idle", "Video saved on iPhone");
+  }, []);
+
+  const handleCommand = useCallback(
+    async (command: CaptureCommand) => {
+      if (command.id && handledCommandsRef.current.has(command.id)) return;
+      if (command.id) handledCommandsRef.current.add(command.id);
+      log.info("capture command", command);
+      try {
+        if (command.type === "take_photo") await takePhoto();
+        if (command.type === "record_start") await startRecording();
+        if (command.type === "record_stop") await stopRecording();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Capture command failed";
+        log.error("capture command failed", err);
+        setCaptureNote(message);
+        const roomId = activeRoomRef.current;
+        if (roomId) {
+          void setPhoneCaptureStatus(roomId, "error", message);
+        }
+      }
+    },
+    [startRecording, stopRecording, takePhoto],
+  );
+
   const applyAnswer = async (
     pc: RTCPeerConnection,
     answer: RTCSessionDescriptionInit,
   ) => {
     if (answerAppliedRef.current || pc.currentRemoteDescription) {
-      log.debug("answer already applied; skip");
+      log.debug("answer already applied — skip");
       return;
     }
     log.rtc("applying remote answer", {
@@ -129,8 +246,10 @@ export function PhoneSender() {
   const start = async (nextFacing: "user" | "environment" = facingMode) => {
     setError(null);
     setNeedsTap(false);
+    setCaptureNote(null);
     const roomId = normalizeRoomCode(roomCode);
     const facing = nextFacing;
+    activeRoomRef.current = roomId;
     log.info("start() called", { roomId, facing, lanReady });
 
     if (!configured) {
@@ -150,6 +269,7 @@ export function PhoneSender() {
     }
 
     cleanup();
+    activeRoomRef.current = roomId;
     setStatus("requesting-camera");
 
     try {
@@ -200,6 +320,7 @@ export function PhoneSender() {
         if (pc.connectionState === "connected") {
           setStatus("live");
           void setRoomStatus(roomId, "connected");
+          void setPhoneCaptureStatus(roomId, "idle", "Ready for capture");
           void logSelectedCandidatePair(pc);
         }
         if (pc.connectionState === "failed") {
@@ -214,9 +335,6 @@ export function PhoneSender() {
       unsubscribersRef.current.push(
         watchIceCandidates(roomId, "desktop", async (candidate) => {
           try {
-            if (!pc.remoteDescription) {
-              log.ice("buffering desktop candidate until remote description");
-            }
             await pc.addIceCandidate(candidate);
             log.ice("added desktop candidate ok");
           } catch (err) {
@@ -244,7 +362,12 @@ export function PhoneSender() {
         }),
       );
 
-      // Backup poll in case a snapshot is missed
+      unsubscribersRef.current.push(
+        watchCaptureCommands(roomId, (command) => {
+          void handleCommand(command);
+        }),
+      );
+
       const poll = window.setInterval(() => {
         void (async () => {
           if (answerAppliedRef.current) {
@@ -270,10 +393,8 @@ export function PhoneSender() {
       log.ice("offer gather result", gatherResult);
       const local = pc.localDescription;
       if (!local?.sdp) throw new Error("Missing local offer SDP");
-      log.rtc("local offer SDP preview", local.sdp.split("\r\n").slice(0, 12));
       await setOffer(roomId, { type: local.type, sdp: local.sdp });
 
-      // Connection watchdog
       window.setTimeout(() => {
         if (
           pcRef.current === pc &&
@@ -355,8 +476,7 @@ export function PhoneSender() {
           Use this phone as a webcam
         </h1>
         <p className="text-sm text-stone-600">
-          Same Wi‑Fi (or USB hotspot) as your PC. Signaling via Firebase; video
-          is peer-to-peer on your network.
+          Desktop can trigger photo / video capture. Files save on this iPhone.
         </p>
       </header>
 
@@ -418,19 +538,53 @@ export function PhoneSender() {
         </button>
       </div>
 
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          type="button"
+          disabled={status !== "live"}
+          onClick={() => void takePhoto().catch((e) => setCaptureNote(String(e)))}
+          className="rounded-xl border border-stone-300 bg-white px-2 py-3 text-xs font-semibold text-stone-800 disabled:opacity-40"
+        >
+          Photo
+        </button>
+        <button
+          type="button"
+          disabled={status !== "live" || recording}
+          onClick={() =>
+            void startRecording().catch((e) => setCaptureNote(String(e)))
+          }
+          className="rounded-xl border border-stone-300 bg-white px-2 py-3 text-xs font-semibold text-stone-800 disabled:opacity-40"
+        >
+          Rec
+        </button>
+        <button
+          type="button"
+          disabled={!recording}
+          onClick={() =>
+            void stopRecording().catch((e) => setCaptureNote(String(e)))
+          }
+          className="rounded-xl border border-red-200 bg-red-50 px-2 py-3 text-xs font-semibold text-red-800 disabled:opacity-40"
+        >
+          Stop
+        </button>
+      </div>
+
       <p className="text-sm text-stone-600">
         Status:{" "}
         <span className="font-medium text-stone-900">
           {status === "idle" && "Ready"}
           {status === "requesting-camera" && "Requesting camera…"}
           {status === "connecting" && "Connecting to desktop on LAN…"}
-          {status === "live" && "Live on local network. Keep this tab open."}
+          {status === "live" &&
+            (recording
+              ? "Live · recording on this iPhone"
+              : "Live on local network. Keep this tab open.")}
           {status === "error" && "Error"}
         </span>
       </p>
-      <p className="text-xs text-stone-500">
-        Debug: Safari → Develop / console, filter <code>[CamLink]</code>
-      </p>
+      {captureNote ? (
+        <p className="text-sm text-teal-800">{captureNote}</p>
+      ) : null}
 
       {error ? (
         <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">

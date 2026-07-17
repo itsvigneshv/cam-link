@@ -25,7 +25,8 @@ cd cam-link
 4. Double-click **`run-bridge.bat`** (or `bridge\run.bat`)
 5. On iPhone Safari, scan the QR / open the printed `https://camlink.web.app/phone#CODE` link
 6. Tap to start the camera → Allow
-7. In Zoom/Meet, select **OBS Virtual Camera**
+7. On the PC browser, open the printed **Desktop controls** link (`/desktop#CODE`) for **Capture photo** / **Start recording** (files save on the iPhone)
+8. In Zoom/Meet, select **OBS Virtual Camera**
 
 `run.bat` auto-creates `.env` from `bridge/.env.example` and installs dependencies into `bridge/.venv`.
 

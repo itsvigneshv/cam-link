@@ -24,6 +24,12 @@ export default function Home() {
           Create pair room
         </Link>
         <Link
+          href="/desktop"
+          className="rounded-xl border border-stone-300 bg-white px-5 py-3 text-sm font-semibold text-stone-900 hover:bg-stone-50"
+        >
+          Desktop controls
+        </Link>
+        <Link
           href="/phone"
           className="rounded-xl border border-stone-300 bg-white px-5 py-3 text-sm font-semibold text-stone-900 hover:bg-stone-50"
         >

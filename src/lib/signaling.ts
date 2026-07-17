@@ -19,6 +19,9 @@ export interface RoomDoc {
   offer?: RTCSessionDescriptionInit | null;
   answer?: RTCSessionDescriptionInit | null;
   desktopLanIps?: string[];
+  phoneCaptureState?: "idle" | "recording" | "saving" | "error";
+  phoneCaptureMessage?: string;
+  phoneCaptureUpdatedAt?: number;
 }
 
 function roomRef(roomId: string) {
